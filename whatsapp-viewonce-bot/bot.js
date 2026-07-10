@@ -61,7 +61,6 @@ function ask(rl, q) {
 // ── Start session ──────────────────────────────────────────────────────────
 async function startSession(phoneNumber, method = 'qr') {
     const sessionDir = `./sessions/${phoneNumber}`;
-    const qrFile     = `./sessions/${phoneNumber}/qr.png`;
 
     if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
@@ -88,9 +87,14 @@ async function startSession(phoneNumber, method = 'qr') {
 
         // ── QR method ─────────────────────────────────────────────────────
         if (qr && method === 'qr') {
-            qrcode.toFile(qrFile, qr, { width: 400 });
-            console.log(`\n[${phoneNumber}] ✅ QR saved → ${qrFile}`);
-            console.log(`[${phoneNumber}] 📱 WhatsApp → Linked Devices → Scan QR\n`);
+            try {
+                const dataUrl = await qrcode.toDataURL(qr);
+                if (process.send) {
+                    process.send({ type: 'qr', number: phoneNumber, dataUrl });
+                }
+            } catch (err) {
+                console.error(`[${phoneNumber}] ❌ QR data URL failed: ${err.message}`);
+            }
         }
 
         // ── Pairing code method ────────────────────────────────────────────

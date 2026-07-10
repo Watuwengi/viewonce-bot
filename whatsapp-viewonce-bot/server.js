@@ -7,6 +7,7 @@ const { addUser, deleteSession, listQrFiles, loadUsers } = require('./session-ma
 const rootDir = __dirname;
 const htmlFile = path.join(rootDir, 'qr-web.html');
 const sessionsDir = path.join(rootDir, 'sessions');
+const qrCache = new Map();
 
 function serveFile(filePath, contentType, res) {
   fs.readFile(filePath, (err, data) => {
@@ -37,8 +38,14 @@ function startBotSession(phoneNumber) {
   const child = spawn(process.execPath, ['bot.js', phoneNumber], {
     cwd: rootDir,
     detached: true,
-    stdio: ['ignore', logStream, logStream],
+    stdio: ['ignore', logStream, logStream, 'ipc'],
     shell: false,
+  });
+
+  child.on('message', (msg) => {
+    if (msg && msg.type === 'qr' && msg.number && msg.dataUrl) {
+      qrCache.set(msg.number, msg.dataUrl);
+    }
   });
 
   child.unref();
@@ -60,7 +67,8 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/qrs') {
-    sendJson(res, listQrFiles());
+    const qrs = Array.from(qrCache.entries()).map(([name, dataUrl]) => ({ name, dataUrl }));
+    sendJson(res, qrs);
     return;
   }
 
@@ -159,5 +167,6 @@ function startAllSessions() {
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
   console.log(`QR web page running at http://localhost:${port}`);
-  startAllSessions();
+  console.log('Server is listening. Launching registered sessions...');
+  setImmediate(startAllSessions);
 });

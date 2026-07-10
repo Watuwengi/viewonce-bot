@@ -163,7 +163,7 @@
           card.className = 'card';
           card.innerHTML = `
             <h2>${qr.name}</h2>
-            <img src="${qr.path}" alt="QR code for ${qr.name}" />
+            <img src="${qr.dataUrl}" alt="QR code for ${qr.name}" />
             <div class="actions">
               <button class="start" data-number="${qr.name}">Start</button>
               <button class="remove" data-number="${qr.name}">Remove</button>

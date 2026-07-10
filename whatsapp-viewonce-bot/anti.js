@@ -101,7 +101,6 @@ async function buildDeletedNotification(sock, original, senderJid, chatJid) {
 // ── Start session ──────────────────────────────────────────────────────────
 async function startSession(phoneNumber, method = 'qr') {
     const sessionDir = path.join(SESSIONS_DIR, phoneNumber);
-    const qrFile     = path.join(sessionDir, 'qr.png');
 
     if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
@@ -114,7 +113,7 @@ async function startSession(phoneNumber, method = 'qr') {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
-        printQRInTerminal: true,
+        printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
     });
@@ -171,9 +170,7 @@ async function startSession(phoneNumber, method = 'qr') {
         const { connection, qr, lastDisconnect } = update;
 
         if (qr && method === 'qr') {
-            qrcode.toFile(qrFile, qr, { width: 400 });
-            console.log(`\n[${phoneNumber}] ✅ QR saved → ${qrFile}`);
-            console.log(`[${phoneNumber}] 📱 WhatsApp → Linked Devices → Scan QR\n`);
+            // QR generation is handled by browser-only sessions. Do not print or save.
         }
 
         if (qr && method === 'code' && !pairingCodeDone) {
