@@ -13,6 +13,7 @@ const pino = require('pino');
 const qrcode = require('qrcode');
 const path = require('path');
 const readline = require('readline');
+const express = require('express');
 
 const ROOT_DIR = __dirname;
 const USERS_FILE = path.join(ROOT_DIR, 'users.json');
@@ -465,6 +466,17 @@ async function startAllSessions() {
         await startSession(user.number, 'qr');
     }
 }
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Bot is running smoothly!');
+});
+
+app.listen(PORT, () => {
+    console.log(`Port binding active on port ${PORT}`);
+});
 
 async function main() {
     const cliNumber = process.argv[2];
