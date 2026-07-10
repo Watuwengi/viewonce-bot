@@ -14,7 +14,9 @@ const qrcode = require('qrcode');
 const path = require('path');
 const readline = require('readline');
 
-const USERS_FILE = './users.json';
+const ROOT_DIR = __dirname;
+const USERS_FILE = path.join(ROOT_DIR, 'users.json');
+const SESSIONS_DIR = path.join(ROOT_DIR, 'sessions');
 
 // ── Users helpers ──────────────────────────────────────────────────────────
 function loadUsers() {
@@ -43,7 +45,7 @@ function deleteSession(phoneNumber) {
         saveUsers(filtered);
         console.log(`✅ Removed ${phoneNumber} from users.json`);
     }
-    const sessionDir = `./sessions/${phoneNumber}`;
+    const sessionDir = path.join(SESSIONS_DIR, phoneNumber);
     if (fs.existsSync(sessionDir)) {
         fs.rmSync(sessionDir, { recursive: true, force: true });
         console.log(`✅ Deleted session folder: ${sessionDir}`);
@@ -98,12 +100,12 @@ async function buildDeletedNotification(sock, original, senderJid, chatJid) {
 
 // ── Start session ──────────────────────────────────────────────────────────
 async function startSession(phoneNumber, method = 'qr') {
-    const sessionDir = `./sessions/${phoneNumber}`;
-    const qrFile     = `./sessions/${phoneNumber}/qr.png`;
+    const sessionDir = path.join(SESSIONS_DIR, phoneNumber);
+    const qrFile     = path.join(sessionDir, 'qr.png');
 
     if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
-    const { state, saveCreds } = await useMultiFileAuthState(`${sessionDir}/auth`);
+    const { state, saveCreds } = await useMultiFileAuthState(path.join(sessionDir, 'auth'));
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -455,29 +457,35 @@ async function menu() {
     }
 }
 
+async function startAllSessions() {
+    const users = loadUsers();
+    if (users.length === 0) {
+        console.log('⚠️  No users found.');
+        return;
+    }
+    console.log(`\n🚀 Starting ${users.length} session(s)...\n`);
+    for (const user of users) {
+        await startSession(user.number, 'qr');
+    }
+}
+
 async function main() {
     const cliNumber = process.argv[2];
     const cliMethod = process.argv[3];
 
-    if (cliNumber === '--all') {
-        const users = loadUsers();
-        if (users.length === 0) {
-            console.log('⚠️  No users found.');
-            return;
-        }
-        console.log(`\n🚀 Starting ${users.length} session(s)...\n`);
-        for (const user of users) await startSession(user.number, 'qr');
+    if (cliNumber === '--menu') {
+        await menu();
         return;
     }
 
-    if (cliNumber) {
-        const method = cliMethod === 'code' ? 'code' : 'qr';
-        console.log(`\n🚀 Connecting ${cliNumber} via ${method === 'code' ? 'Pairing Code' : 'QR'}...\n`);
-        await startSession(cliNumber, method);
+    if (cliNumber === '--all' || !cliNumber) {
+        await startAllSessions();
         return;
     }
 
-    await menu();
+    const method = cliMethod === 'code' ? 'code' : 'qr';
+    console.log(`\n🚀 Connecting ${cliNumber} via ${method === 'code' ? 'Pairing Code' : 'QR'}...\n`);
+    await startSession(cliNumber, method);
 }
 
 main().catch((err) => {

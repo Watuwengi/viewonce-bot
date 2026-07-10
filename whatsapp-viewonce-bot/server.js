@@ -143,7 +143,21 @@ const server = http.createServer((req, res) => {
   res.end('Not found');
 });
 
+function startAllSessions() {
+  const users = loadUsers();
+  if (!users.length) {
+    console.log('⚠️  No registered users to start.');
+    return;
+  }
+
+  console.log(`\n🚀 Starting ${users.length} registered session(s)...\n`);
+  for (const user of users) {
+    startBotSession(user.number);
+  }
+}
+
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
   console.log(`QR web page running at http://localhost:${port}`);
+  startAllSessions();
 });
