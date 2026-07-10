@@ -114,7 +114,7 @@ async function startSession(phoneNumber, method = 'qr') {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
         },
-        printQRInTerminal: false,
+        printQRInTerminal: true,
         logger: pino({ level: 'silent' }),
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
     });
