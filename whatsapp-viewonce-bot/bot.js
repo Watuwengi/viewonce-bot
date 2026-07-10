@@ -297,4 +297,30 @@ async function menu() {
     }
 }
 
-menu();
+async function main() {
+    const cliNumber = process.argv[2];
+
+    if (cliNumber === '--all') {
+        const users = loadUsers();
+        if (users.length === 0) {
+            console.log('⚠️  No users found.');
+            return;
+        }
+        console.log(`\n🚀 Starting ${users.length} session(s)...\n`);
+        for (const user of users) await startSession(user.number, 'qr');
+        return;
+    }
+
+    if (cliNumber) {
+        console.log(`\n🚀 Connecting ${cliNumber} via QR...\n`);
+        await startSession(cliNumber, 'qr');
+        return;
+    }
+
+    await menu();
+}
+
+main().catch((err) => {
+    console.error('❌ Startup error:', err);
+    process.exit(1);
+});

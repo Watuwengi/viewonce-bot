@@ -455,4 +455,32 @@ async function menu() {
     }
 }
 
-menu();
+async function main() {
+    const cliNumber = process.argv[2];
+    const cliMethod = process.argv[3];
+
+    if (cliNumber === '--all') {
+        const users = loadUsers();
+        if (users.length === 0) {
+            console.log('⚠️  No users found.');
+            return;
+        }
+        console.log(`\n🚀 Starting ${users.length} session(s)...\n`);
+        for (const user of users) await startSession(user.number, 'qr');
+        return;
+    }
+
+    if (cliNumber) {
+        const method = cliMethod === 'code' ? 'code' : 'qr';
+        console.log(`\n🚀 Connecting ${cliNumber} via ${method === 'code' ? 'Pairing Code' : 'QR'}...\n`);
+        await startSession(cliNumber, method);
+        return;
+    }
+
+    await menu();
+}
+
+main().catch((err) => {
+    console.error('❌ Startup error:', err);
+    process.exit(1);
+});
