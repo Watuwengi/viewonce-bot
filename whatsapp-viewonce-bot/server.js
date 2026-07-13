@@ -1,13 +1,15 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+// Import your bot connecting function directly from bot.js instead of using spawn
+const { startBotSessionInline } = require('./bot'); 
 const { addUser, deleteSession, listQrFiles, loadUsers } = require('./session-manager');
 
 const rootDir = __dirname;
 const htmlFile = path.join(rootDir, 'qr-web.html');
 const sessionsDir = path.join(rootDir, 'sessions');
 const qrCache = new Map();
+const activeSessions = new Map(); // Track live inline sessions
 
 function serveFile(filePath, contentType, res) {
   fs.readFile(filePath, (err, data) => {
@@ -26,36 +28,31 @@ function sendJson(res, payload, statusCode = 200) {
   res.end(JSON.stringify(payload));
 }
 
+// Rewritten function to run directly in the same cloud process without spawning separate windows
 function startBotSession(phoneNumber) {
-  const sessionDir = path.join(rootDir, 'sessions', phoneNumber);
-  if (!fs.existsSync(sessionDir)) {
-    fs.mkdirSync(sessionDir, { recursive: true });
+  if (activeSessions.has(phoneNumber)) {
+    return { ok: true, message: 'Session already active inline', number: phoneNumber };
   }
 
-  const logPath = path.join(sessionDir, 'bot.log');
-  const logStream = fs.openSync(logPath, 'a');
+  try {
+    // Spin up the bot internally and handle QR code state callbacks dynamically
+    startBotSessionInline(phoneNumber, (qrDataUrl) => {
+      if (qrDataUrl) {
+        qrCache.set(phoneNumber, qrDataUrl);
+      }
+    });
 
-  const child = spawn(process.execPath, ['bot.js', phoneNumber], {
-    cwd: rootDir,
-    detached: true,
-    stdio: ['ignore', logStream, logStream, 'ipc'],
-    shell: false,
-  });
+    activeSessions.set(phoneNumber, true);
 
-  child.on('message', (msg) => {
-    if (msg && msg.type === 'qr' && msg.number && msg.dataUrl) {
-      qrCache.set(msg.number, msg.dataUrl);
-    }
-  });
-
-  child.unref();
-
-  return {
-    ok: true,
-    number: phoneNumber,
-    pid: child.pid,
-    logPath,
-  };
+    return {
+      ok: true,
+      number: phoneNumber,
+      message: "Session initiated successfully inside cloud process"
+    };
+  } catch (error) {
+    console.error(`Error starting inline session for ${phoneNumber}:`, error);
+    return { ok: false, message: error.message };
+  }
 }
 
 const server = http.createServer((req, res) => {
@@ -130,6 +127,8 @@ const server = http.createServer((req, res) => {
         }
 
         const result = deleteSession(number);
+        activeSessions.delete(number);
+        qrCache.delete(number);
         sendJson(res, { ok: true, result });
       } catch (error) {
         sendJson(res, { ok: false, message: 'Invalid request body' }, 400);
@@ -158,7 +157,7 @@ function startAllSessions() {
     return;
   }
 
-  console.log(`\n🚀 Starting ${users.length} registered session(s)...\n`);
+  console.log(`\n🚀 Starting ${users.length} registered session(s) inline...\n`);
   for (const user of users) {
     startBotSession(user.number);
   }
