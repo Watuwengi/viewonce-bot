@@ -68,6 +68,7 @@ async function buildDeletedNotification(sock, original, senderJid, chatJid) {
     const msg   = original.message;
     const type  = msg ? getContentType(msg) : null;
 
+    // Text message
     if (type === 'conversation' || type === 'extendedTextMessage') {
         const text = msg.conversation || msg.extendedTextMessage?.text || '';
         return {
@@ -78,6 +79,7 @@ async function buildDeletedNotification(sock, original, senderJid, chatJid) {
         };
     }
 
+    // Media message — download the buffer
     if (['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'].includes(type)) {
         try {
             const buffer = await downloadMediaMessage(original, 'buffer', {}, { sock });
@@ -97,9 +99,10 @@ async function buildDeletedNotification(sock, original, senderJid, chatJid) {
     return { kind: 'unknown', type };
 }
 
-// ── Inline Multi-Session Cloud Orchestrator ──────────────────────────────
-async function startBotSessionInline(phoneNumber, onQrGenerated) {
+// ── Start session ──────────────────────────────────────────────────────────
+async function startSession(phoneNumber, method = 'qr') {
     const sessionDir = path.join(SESSIONS_DIR, phoneNumber);
+
     if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(path.join(sessionDir, 'auth'));
@@ -116,8 +119,11 @@ async function startBotSessionInline(phoneNumber, onQrGenerated) {
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
     });
 
-    const messageStore = {};
-    const nameCache     = {};
+    // ── Per-session message store ──────────────────────────────────────────
+    // Keyed by msgId → full WebMessageInfo object
+    // Stores last 500 messages per chat to cap memory usage
+    const messageStore = {}; // { [chatJid]: { [msgId]: fullMsg } }
+    const nameCache    = {}; // { [jid]: displayName } — persists even after msg pruned
     const MAX_PER_CHAT = 500;
 
     function storeMessage(msg) {
@@ -126,11 +132,13 @@ async function startBotSessionInline(phoneNumber, onQrGenerated) {
         if (!messageStore[jid]) messageStore[jid] = {};
         messageStore[jid][msg.key.id] = msg;
 
+        // Cache the sender's display name whenever we see it
         const senderJid = msg.key.participant || msg.key.remoteJid;
         if (msg.pushName && senderJid) {
             nameCache[senderJid] = msg.pushName;
         }
 
+        // Prune oldest if over limit
         const ids = Object.keys(messageStore[jid]);
         if (ids.length > MAX_PER_CHAT) {
             delete messageStore[jid][ids[0]];
@@ -141,6 +149,7 @@ async function startBotSessionInline(phoneNumber, onQrGenerated) {
         return messageStore[chatJid]?.[msgId] || null;
     }
 
+    // Get best available name for a JID
     function getName(jid, fallbackMsg) {
         return fallbackMsg?.pushName
             || fallbackMsg?.verifiedBizName
@@ -151,86 +160,148 @@ async function startBotSessionInline(phoneNumber, onQrGenerated) {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // ── Store ALL messages as they arrive ──────────────────────────────────
     sock.ev.on('messages.upsert', ({ messages }) => {
         for (const msg of messages) storeMessage(msg);
     });
 
+    let pairingCodeDone = false;
+
     sock.ev.on('connection.update', async (update) => {
         const { connection, qr, lastDisconnect } = update;
 
-        // Convert the raw text QR string into a base64 DataURL and send it up to server.js
-        if (qr && onQrGenerated) {
+        if (qr && method === 'qr') {
+            // QR generation is handled by browser-only sessions. Do not print or save.
+        }
+
+        if (qr && method === 'code' && !pairingCodeDone) {
+            pairingCodeDone = true;
             try {
-                const dataUrl = await qrcode.toDataURL(qr);
-                onQrGenerated(dataUrl);
+                const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
+                console.log(`\n[${phoneNumber}] 🔄 Requesting pairing code for ${cleanNumber}...`);
+                const code = await sock.requestPairingCode(cleanNumber);
+                const formatted = code?.match(/.{1,4}/g)?.join('-') ?? code;
+                console.log(`\n[${phoneNumber}] ╔══════════════════════════════════╗`);
+                console.log(`[${phoneNumber}] ║  📲 PAIRING CODE: ${formatted.padEnd(13)} ║`);
+                console.log(`[${phoneNumber}] ╚══════════════════════════════════╝`);
+                console.log(`[${phoneNumber}]   1. Open WhatsApp`);
+                console.log(`[${phoneNumber}]   2. ⋮ → Linked Devices → Link a Device`);
+                console.log(`[${phoneNumber}]   3. "Link with phone number instead"`);
+                console.log(`[${phoneNumber}]   4. Enter: ${formatted}\n`);
             } catch (err) {
-                console.error(`[${phoneNumber}] Failed to render QR string:`, err.message);
+                console.error(`[${phoneNumber}] ❌ Pairing code failed: ${err.message}`);
+                pairingCodeDone = false;
             }
         }
 
         if (connection === 'open') {
-            console.log(`\n[${phoneNumber}] ✅ CONNECTED INLINE!`);
+            console.log(`\n[${phoneNumber}] ✅ CONNECTED!`);
             console.log(`[${phoneNumber}] 📌 Anti-delete ON | Reply to view-once to save it\n`);
         }
 
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === 401 || code === 440) {
-                console.log(`[${phoneNumber}] 🚫 Session expired. Clean up data and re-pair.`);
+                console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Delete session and re-add.`);
             } else {
-                console.log(`[${phoneNumber}] 🔄 Reconnecting inline instance in 5s...`);
-                setTimeout(() => startBotSessionInline(phoneNumber, onQrGenerated), 5000);
+                console.log(`[${phoneNumber}] 🔄 Reconnecting in 5s...`);
+                setTimeout(() => startSession(phoneNumber, 'qr'), 5000);
             }
         }
     });
 
-    // ── Anti-delete Event Handler ──────────────────────────────────────────
+    // ── Anti-delete: catch deleted messages ───────────────────────────────
     sock.ev.on('messages.update', async (updates) => {
         for (const { key, update } of updates) {
+            // Check for REVOKE (deleted for everyone) or ADMIN_REVOKE (admin delete in group)
             const isDeleted = update.messageStubType === WAMessageStubType.REVOKE
                            || update.messageStubType === WAMessageStubType.ADMIN_REVOKE
                            || update.message === null;
 
             if (!isDeleted) continue;
-            if (key.fromMe) continue;
 
-            const original = lookupMessage(key.remoteJid, key.id);
-            if (!original) continue;
+            // The key.id here is the DELETED message's ID
+            const deletedMsgId = key.id;
+            const chatJid      = key.remoteJid;
+
+            // Skip if WE deleted our own message
+            if (key.fromMe) {
+                console.log(`[${phoneNumber}] 🗑️  You deleted your own message — ignoring`);
+                continue;
+            }
+
+            // Look up original message from store
+            const original = lookupMessage(chatJid, deletedMsgId);
+
+            if (!original) {
+                console.log(`[${phoneNumber}] 🗑️  Delete detected but original not in store (too old or never seen)`);
+                continue;
+            }
 
             const senderJid  = original.key.participant || original.key.remoteJid;
+            // getName checks pushName on the msg, then the persistent nameCache, then falls back to number
             const senderName = getName(senderJid, original);
+
+            console.log(`\n[${phoneNumber}] 🗑️  DELETE DETECTED`);
+            console.log(`[${phoneNumber}]    Chat:   ${chatJid}`);
+            console.log(`[${phoneNumber}]    Sender: ${senderName} (${senderJid})`);
+
+            // Build and send notification to owner
             const ownerJid = phoneNumber + '@s.whatsapp.net';
-            const header   = `🗑️ *Deleted Message*\n👤 From: *${senderName}*\n📞 Number: ${senderJid.split('@')[0]}\n💬 Chat: ${key.remoteJid}\n`;
+            const header   = `🗑️ *Deleted Message*\n👤 From: *${senderName}*\n📞 Number: ${senderJid.split('@')[0]}\n💬 Chat: ${chatJid}\n`;
 
             try {
-                const info = await buildDeletedNotification(sock, original, senderJid, key.remoteJid);
+                const info = await buildDeletedNotification(sock, original, senderJid, chatJid);
+
                 if (info.kind === 'text') {
-                    await sock.sendMessage(ownerJid, { text: header + `\n📝 *Message:*\n${info.text}` });
+                    await sock.sendMessage(ownerJid, {
+                        text: header + `\n📝 *Message:*\n${info.text}`
+                    });
+                    console.log(`[${phoneNumber}] ✅ Deleted text forwarded`);
+
                 } else if (info.kind === 'media') {
-                    await sock.sendMessage(ownerJid, { [info.mediaKey]: info.buffer, caption: header + (info.caption ? `\n📝 Caption: ${info.caption}` : '') });
+                    await sock.sendMessage(ownerJid, {
+                        [info.mediaKey]: info.buffer,
+                        caption: header + (info.caption ? `\n📝 Caption: ${info.caption}` : '')
+                    });
+                    console.log(`[${phoneNumber}] ✅ Deleted media forwarded (${info.type})`);
+
+                } else if (info.kind === 'media_failed') {
+                    await sock.sendMessage(ownerJid, {
+                        text: header + `\n⚠️ Media (${info.type}) could not be retrieved`
+                    });
+                    console.log(`[${phoneNumber}] ⚠️  Deleted media could not be downloaded`);
+
+                } else {
+                    await sock.sendMessage(ownerJid, {
+                        text: header + `\n⚠️ Unknown message type: ${info.type}`
+                    });
                 }
             } catch (err) {
-                console.error(`[${phoneNumber}] Inline Anti-delete dispatch error:`, err.message);
+                console.error(`[${phoneNumber}] ❌ Anti-delete error: ${err.message}`);
             }
         }
     });
 
-    // ── View-once Event Handler ─────────────────────────────────────────────
+    // ── View-once handler ──────────────────────────────────────────────────
     sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
-            if (!msg.message || !msg.key.fromMe) continue;
+            if (!msg.message) continue;
+            if (!msg.key.fromMe) continue;
 
-            const from = msg.key.remoteJid;
+            const from        = msg.key.remoteJid;
             const contextInfo = extractContextInfo(msg.message);
             if (!contextInfo?.quotedMessage) continue;
 
             const viewOnceContent = extractViewOnce(contextInfo.quotedMessage);
             if (!viewOnceContent) continue;
 
-            console.log(`\n[${phoneNumber}] 🔥 View-once reply detected!`);
-            const stanzaId = contextInfo.stanzaId;
+            console.log(`\n[${phoneNumber}] 🔥 View-once reply detected! Forwarding...`);
+
+            const stanzaId    = contextInfo.stanzaId;
             const participant = contextInfo.participant;
-            const storedMsg = lookupMessage(from, stanzaId) || lookupMessage(participant || from, stanzaId);
+            const storedMsg   = lookupMessage(from, stanzaId)
+                             || lookupMessage(participant || from, stanzaId);
 
             let msgToDownload;
             if (storedMsg) {
@@ -247,18 +318,19 @@ async function startBotSessionInline(phoneNumber, onQrGenerated) {
                     message: viewOnceContent
                 };
             }
+
             await forwardViewOnce(sock, msgToDownload, from, phoneNumber);
         }
     });
 }
 
-// ── Legacy Start Session (Fallback for CLI methods) ────────────────────────
-async function startSession(phoneNumber, method = 'qr') {
-    await startBotSessionInline(phoneNumber, () => {});
-}
-
+// ── Helpers ────────────────────────────────────────────────────────────────
 function extractContextInfo(message) {
-    const types = ['conversation', 'extendedTextMessage', 'imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'];
+    const types = [
+        'conversation', 'extendedTextMessage', 'imageMessage',
+        'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage',
+        'buttonsResponseMessage', 'listResponseMessage',
+    ];
     for (const t of types) {
         if (message[t]?.contextInfo) return message[t].contextInfo;
     }
@@ -277,20 +349,155 @@ function extractViewOnce(quoted) {
 async function forwardViewOnce(sock, msgToDownload, from, phoneNumber) {
     try {
         const buffer = await downloadMediaMessage(msgToDownload, 'buffer', {}, { sock });
-        if (!buffer || buffer.length < 500) return;
+        if (!buffer || buffer.length < 500) {
+            console.log(`[${phoneNumber}] ❌ View-once download failed (${buffer?.length ?? 0} bytes)`);
+            return;
+        }
         const type     = getContentType(msgToDownload.message);
         const ownerJid = phoneNumber + '@s.whatsapp.net';
-        const mediaKey = type === 'imageMessage' ? 'image' : type === 'videoMessage' ? 'video' : 'audio';
-        await sock.sendMessage(ownerJid, { [mediaKey]: buffer, caption: `👁️ *View Once*\n📍 From: ${from}` });
+        const mediaKey = type === 'imageMessage' ? 'image'
+                       : type === 'videoMessage' ? 'video'
+                       : 'audio';
+        await sock.sendMessage(ownerJid, {
+            [mediaKey]: buffer,
+            caption: `👁️ *View Once*\n📍 From: ${from}`
+        });
+        console.log(`[${phoneNumber}] ✅ View-once forwarded (${(buffer.length / 1024).toFixed(1)} KB)`);
     } catch (err) {
-        console.error(`[${phoneNumber}] View-once capture failure:`, err.message);
+        console.error(`[${phoneNumber}] ❌ View-once error: ${err.message}`);
     }
 }
 
-// Export module logic directly to support server.js unified process tree
-module.exports = {
-    startBotSessionInline,
-    loadUsers,
-    addUser,
-    deleteSession
-};
+// ── Connection method prompt ───────────────────────────────────────────────
+async function askConnectionMethod(rl, phoneNumber) {
+    console.log(`\nHow should ${phoneNumber} connect?`);
+    console.log('  1. QR Code      — scan with camera');
+    console.log('  2. Pairing Code — enter code on phone');
+    const choice = (await ask(rl, 'Choose (1/2): ')).trim();
+    return choice === '2' ? 'code' : 'qr';
+}
+
+// ── Main menu ──────────────────────────────────────────────────────────────
+async function menu() {
+    const rl = createRL();
+
+    console.log('\n╔══════════════════════════════════╗');
+    console.log('║   WhatsApp View-Once Saver Bot   ║');
+    console.log('║    + Anti-Delete  | Multi-User   ║');
+    console.log('╚══════════════════════════════════╝\n');
+
+    const users = loadUsers();
+
+    if (users.length > 0) {
+        console.log(`📋 Registered users (${users.length}):`);
+        users.forEach((u, i) => console.log(`   ${i + 1}. ${u.number}`));
+        console.log('');
+    }
+
+    console.log('Options:');
+    console.log('  1. Start all existing sessions');
+    console.log('  2. Add new user + connect now');
+    console.log('  3. Add new user only (connect later)');
+    console.log('  4. Start a specific user session');
+    console.log('  5. Delete a user session');
+    console.log('');
+
+    const choice = (await ask(rl, 'Choose (1-5): ')).trim();
+
+    if (choice === '1') {
+        rl.close();
+        if (users.length === 0) { console.log('⚠️  No users found.'); return; }
+        console.log(`\n🚀 Starting ${users.length} session(s)...\n`);
+        for (const user of users) await startSession(user.number, 'qr');
+
+    } else if (choice === '2') {
+        const number = (await ask(rl, 'Enter WhatsApp number (e.g. 254712345678): ')).trim();
+        const method = await askConnectionMethod(rl, number);
+        rl.close();
+        addUser(number);
+        console.log(`\n🚀 Connecting ${number} via ${method === 'code' ? 'Pairing Code' : 'QR'}...\n`);
+        await startSession(number, method);
+
+    } else if (choice === '3') {
+        const number = (await ask(rl, 'Enter WhatsApp number (e.g. 254712345678): ')).trim();
+        rl.close();
+        if (addUser(number)) console.log(`✅ User ${number} added. Run bot again to connect.`);
+
+    } else if (choice === '4') {
+        if (users.length === 0) { console.log('⚠️  No users found.'); rl.close(); return; }
+        const idx  = (await ask(rl, `Pick user (1-${users.length}): `)).trim();
+        const user = users[parseInt(idx) - 1];
+        if (!user) { console.log('❌ Invalid'); rl.close(); return; }
+        const method = await askConnectionMethod(rl, user.number);
+        rl.close();
+        console.log(`\n🚀 Starting ${user.number}...\n`);
+        await startSession(user.number, method);
+
+    } else if (choice === '5') {
+        if (users.length === 0) { console.log('⚠️  No users found.'); rl.close(); return; }
+        console.log('\nWhich user to delete?');
+        users.forEach((u, i) => console.log(`  ${i + 1}. ${u.number}`));
+        const idx     = (await ask(rl, `Pick user (1-${users.length}): `)).trim();
+        const user    = users[parseInt(idx) - 1];
+        if (!user) { console.log('❌ Invalid'); rl.close(); return; }
+        const confirm = (await ask(rl, `⚠️  Delete ${user.number} and ALL their data? (yes/no): `)).trim();
+        rl.close();
+        if (confirm.toLowerCase() === 'yes') {
+            deleteSession(user.number);
+            console.log(`\n🗑️  Session for ${user.number} fully deleted.`);
+        } else {
+            console.log('❌ Cancelled.');
+        }
+
+    } else {
+        rl.close();
+        console.log('❌ Invalid choice');
+    }
+}
+
+async function startAllSessions() {
+    const users = loadUsers();
+    if (users.length === 0) {
+        console.log('⚠️  No users found.');
+        return;
+    }
+    console.log(`\n🚀 Starting ${users.length} session(s)...\n`);
+    for (const user of users) {
+        await startSession(user.number, 'qr');
+    }
+}
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Bot is running smoothly!');
+});
+
+app.listen(PORT, () => {
+    console.log(`Port binding active on port ${PORT}`);
+});
+
+async function main() {
+    const cliNumber = process.argv[2];
+    const cliMethod = process.argv[3];
+
+    if (cliNumber === '--menu') {
+        await menu();
+        return;
+    }
+
+    if (cliNumber === '--all' || !cliNumber) {
+        await startAllSessions();
+        return;
+    }
+
+    const method = cliMethod === 'code' ? 'code' : 'qr';
+    console.log(`\n🚀 Connecting ${cliNumber} via ${method === 'code' ? 'Pairing Code' : 'QR'}...\n`);
+    await startSession(cliNumber, method);
+}
+
+main().catch((err) => {
+    console.error('❌ Startup error:', err);
+    process.exit(1);
+});
