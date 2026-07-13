@@ -1,0 +1,11 @@
+2026/05/25-23:21:52.848 56c0 Reusing MANIFEST C:\Users\Abracadabra\OneDrive\Desktop\view once\whatsapp-viewonce-bot\wa_session\session-bot1\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/05/25-23:21:52.850 56c0 Recovering log #157
+2026/05/25-23:21:52.851 56c0 Reusing old log C:\Users\Abracadabra\OneDrive\Desktop\view once\whatsapp-viewonce-bot\wa_session\session-bot1\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000157.log 
+2026/05/25-23:21:52.944 59dc Manual compaction at level-0 from '\x00$\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00%\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/05/25-23:21:52.944 59dc Manual compaction at level-1 from '\x00$\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00%\x00\x00\x00' @ 0 : 0; will stop at '\x00&\x04\x01\x01\x0b\x00W\x00A\x00U\x00n\x00k\x00n\x00o\x00w\x00n\x00I\x00D' @ 743710 : 1
+2026/05/25-23:21:52.947 59dc Compacting 1@1 + 1@2 files
+2026/05/25-23:21:53.005 59dc Generated table #160@1: 25 keys, 678 bytes
+2026/05/25-23:21:53.005 59dc Compacted 1@1 + 1@2 files => 678 bytes
+2026/05/25-23:21:53.055 59dc compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/05/25-23:21:53.057 5bb8 Manual compaction at level-1 from '\x00&\x04\x01\x01\x0b\x00W\x00A\x00U\x00n\x00k\x00n\x00o\x00w\x00n\x00I\x00D' @ 743710 : 1 .. '\x00%\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/05/25-23:21:53.061 17d0 Manual compaction at level-0 from '\x00'\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00(\x00\x00\x00' @ 0 : 0; will stop at (end)
