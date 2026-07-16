@@ -198,7 +198,16 @@ async function startSession(phoneNumber, method = 'qr') {
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === 401 || code === 440) {
-                console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Delete session and re-add.`);
+                console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Clearing auth and reconnecting with fresh QR...`);
+                try {
+                    if (fs.existsSync(sessionDir)) {
+                        fs.rmSync(sessionDir, { recursive: true, force: true });
+                        console.log(`[${phoneNumber}] ✅ Cleared session state at ${sessionDir}`);
+                    }
+                } catch (err) {
+                    console.error(`[${phoneNumber}] ❌ Failed to clear session: ${err.message}`);
+                }
+                setTimeout(() => startSession(phoneNumber, 'qr'), 2000);
             } else {
                 console.log(`[${phoneNumber}] 🔄 Reconnecting in 5s...`);
                 setTimeout(() => startSession(phoneNumber, 'qr'), 5000);
