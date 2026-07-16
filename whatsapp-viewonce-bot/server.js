@@ -37,18 +37,24 @@ function startBotSession(phoneNumber) {
 
   const child = spawn(process.execPath, ['bot.js', phoneNumber], {
     cwd: rootDir,
-    detached: true,
     stdio: ['ignore', logStream, logStream, 'ipc'],
     shell: false,
   });
 
   child.on('message', (msg) => {
     if (msg && msg.type === 'qr' && msg.number && msg.dataUrl) {
+      console.log(`Received QR for ${msg.number}`);
       qrCache.set(msg.number, msg.dataUrl);
     }
   });
 
-  child.unref();
+  child.on('exit', (code, signal) => {
+    console.log(`Bot process for ${phoneNumber} exited with code=${code} signal=${signal}`);
+  });
+
+  child.on('error', (err) => {
+    console.error(`Failed to spawn bot process for ${phoneNumber}:`, err.message);
+  });
 
   return {
     ok: true,
@@ -164,9 +170,31 @@ function startAllSessions() {
   }
 }
 
-const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`QR web page running at http://localhost:${port}`);
-  console.log('Server is listening. Launching registered sessions...');
-  setImmediate(startAllSessions);
-});
+const basePort = parseInt(process.env.PORT, 10) || 3000;
+const MAX_PORT = basePort + 10;
+
+function startServer(port = basePort) {
+  server.removeAllListeners('error');
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && port < MAX_PORT) {
+      console.warn(`Port ${port} already in use. Trying ${port + 1}...`);
+      setTimeout(() => startServer(port + 1), 100);
+      return;
+    }
+
+    console.error(`Failed to start server on port ${port}:`, err.message);
+    process.exit(1);
+  });
+
+  server.listen(port, () => {
+    console.log(`QR web page running at http://localhost:${port}`);
+    console.log('Server is listening. Launching registered sessions...');
+    setImmediate(startAllSessions);
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { startServer };

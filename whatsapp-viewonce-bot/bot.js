@@ -64,8 +64,16 @@ async function startSession(phoneNumber, method = 'qr') {
 
     if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true });
 
-    const { state, saveCreds } = await useMultiFileAuthState(`${sessionDir}/auth`);
+    const authDir = `${sessionDir}/auth`;
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const { version } = await fetchLatestBaileysVersion();
+
+    function clearSessionState() {
+        if (fs.existsSync(sessionDir)) {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+            console.log(`[${phoneNumber}] ✅ Cleared session state at ${sessionDir}`);
+        }
+    }
 
     const sock = makeWASocket({
         version,
@@ -89,8 +97,14 @@ async function startSession(phoneNumber, method = 'qr') {
         if (qr && method === 'qr') {
             try {
                 const dataUrl = await qrcode.toDataURL(qr);
-                if (process.send) {
+                const qrPath = path.join(sessionDir, 'qr.png');
+                const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+                fs.writeFileSync(qrPath, base64Data, 'base64');
+
+                if (process.send && process.connected) {
                     process.send({ type: 'qr', number: phoneNumber, dataUrl });
+                } else {
+                    console.log(`[${phoneNumber}] ⚠️ QR generated but IPC channel is closed. Saved to ${qrPath}`);
                 }
             } catch (err) {
                 console.error(`[${phoneNumber}] ❌ QR data URL failed: ${err.message}`);
@@ -130,7 +144,9 @@ async function startSession(phoneNumber, method = 'qr') {
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === 401 || code === 440) {
-                console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Delete session and re-add to reconnect.`);
+                console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Clearing auth and reconnecting with fresh QR...`);
+                clearSessionState();
+                setTimeout(() => startSession(phoneNumber, 'qr'), 2000);
             } else {
                 console.log(`[${phoneNumber}] 🔄 Connection closed (code ${code}). Reconnecting in 5s...`);
                 setTimeout(() => startSession(phoneNumber, 'qr'), 5000);
