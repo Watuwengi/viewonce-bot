@@ -4,6 +4,27 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WhatsApp QR Codes</title>
+  <script>
+    (async function() {
+      if (location.protocol !== 'file:') return;
+      const ports = [3000, 3001, 3002, 3003];
+      for (const port of ports) {
+        try {
+          await fetch(`http://localhost:${port}/`, { mode: 'no-cors', cache: 'no-store' });
+          location.href = `http://localhost:${port}/`;
+          return;
+        } catch (_err) {
+          continue;
+        }
+      }
+      window.addEventListener('DOMContentLoaded', () => {
+        const notice = document.createElement('div');
+        notice.style = 'position:fixed;top:0;left:0;right:0;padding:14px 16px;background:#f59e0b;color:#0f172a;font-weight:700;z-index:9999;text-align:center;';
+        notice.innerHTML = 'This page must be opened from the server. Use <a href="http://localhost:3000" style="color:#0f172a;text-decoration:underline;">http://localhost:3000</a> or <a href="http://localhost:3001" style="color:#0f172a;text-decoration:underline;">http://localhost:3001</a>.';
+        document.body.appendChild(notice);
+      });
+    })();
+  </script>
   <style>
     :root {
       color-scheme: dark;
