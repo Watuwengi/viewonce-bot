@@ -109,13 +109,14 @@
       border-radius: 10px;
       padding: 10px 14px;
       cursor: pointer;
+      pointer-events: auto;
       font-weight: 700;
     }
     .toolbar .primary { background: #22c55e; color: #052e16; }
     .toolbar .danger { background: #ef4444; color: white; }
     .toolbar .secondary { background: #334155; color: white; }
     .actions { display: flex; gap: 8px; margin-top: 10px; }
-    .actions button { padding: 8px 10px; border-radius: 8px; border: none; cursor: pointer; }
+    .actions button { padding: 8px 10px; border-radius: 8px; border: none; cursor: pointer; pointer-events: auto; }
     .actions .start { background: #22c55e; color: #052e16; }
     .actions .remove { background: #ef4444; color: white; }
     .users { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -130,9 +131,9 @@
 
     <div class="toolbar">
       <input id="number-input" placeholder="Enter phone number e.g. 254712345678" />
-      <button class="primary" id="add-user-btn">Add account</button>
-      <button class="secondary" id="start-all-btn">Start all</button>
-      <button class="danger" id="clear-all-btn">Remove all sessions</button>
+      <button type="button" class="primary" id="add-user-btn">Add account</button>
+      <button type="button" class="secondary" id="start-all-btn">Start all</button>
+      <button type="button" class="danger" id="clear-all-btn">Remove all sessions</button>
     </div>
     <div id="message" class="message"></div>
     <div id="users-list" class="users"></div>
@@ -188,8 +189,8 @@
             <h2>${qr.name}</h2>
             <img src="${qr.dataUrl}" alt="QR code for ${qr.name}" />
             <div class="actions">
-              <button class="start" data-number="${qr.name}">Start</button>
-              <button class="remove" data-number="${qr.name}">Remove</button>
+              <button type="button" class="start" data-number="${qr.name}">Start</button>
+              <button type="button" class="remove" data-number="${qr.name}">Remove</button>
             </div>
             <div class="status">Updated automatically</div>
           `;
@@ -273,6 +274,7 @@
     document.getElementById('clear-all-btn').addEventListener('click', clearAllSessions);
 
     listEl.addEventListener('click', (event) => {
+      event.preventDefault();
       const button = event.target.closest('button');
       if (!button) return;
       const number = button.getAttribute('data-number');
