@@ -86,6 +86,20 @@ async function startSession(phoneNumber, method = 'qr') {
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
     });
 
+    let reconnectTimeout = null;
+    let reconnecting = false;
+
+    function scheduleReconnect(delay, nextMethod = method) {
+        if (reconnectTimeout) return;
+        reconnecting = true;
+        reconnectTimeout = setTimeout(async () => {
+            reconnectTimeout = null;
+            reconnecting = false;
+            console.log(`[${phoneNumber}] 🔁 Restarting session...`);
+            await startSession(phoneNumber, nextMethod);
+        }, delay);
+    }
+
     sock.ev.on('creds.update', saveCreds);
 
     let pairingCodeDone = false;
@@ -137,19 +151,25 @@ async function startSession(phoneNumber, method = 'qr') {
         }
 
         if (connection === 'open') {
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = null;
+                reconnecting = false;
+            }
             console.log(`\n[${phoneNumber}] ✅ CONNECTED!`);
             console.log(`[${phoneNumber}] 📌 Reply to any view-once with any text to forward it\n`);
         }
 
         if (connection === 'close') {
+            if (reconnecting) return;
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === 401 || code === 440) {
                 console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Clearing auth and reconnecting with fresh QR...`);
                 clearSessionState();
-                setTimeout(() => startSession(phoneNumber, 'qr'), 2000);
+                scheduleReconnect(2000, 'qr');
             } else {
                 console.log(`[${phoneNumber}] 🔄 Connection closed (code ${code}). Reconnecting in 5s...`);
-                setTimeout(() => startSession(phoneNumber, 'qr'), 5000);
+                scheduleReconnect(5000);
             }
         }
     });

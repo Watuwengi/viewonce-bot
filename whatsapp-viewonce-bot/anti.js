@@ -130,6 +130,20 @@ async function startSession(phoneNumber, method = 'qr') {
         browser: ['Ubuntu', 'Chrome', '20.0.04'],
     });
 
+    let reconnectTimeout = null;
+    let reconnecting = false;
+
+    function scheduleReconnect(delay, nextMethod = method) {
+        if (reconnectTimeout) return;
+        reconnecting = true;
+        reconnectTimeout = setTimeout(async () => {
+            reconnectTimeout = null;
+            reconnecting = false;
+            console.log(`[${phoneNumber}] 🔁 Restarting session...`);
+            await startSession(phoneNumber, nextMethod);
+        }, delay);
+    }
+
     const messageStore = {}; 
     const nameCache    = {}; 
     const MAX_PER_CHAT = 500;
@@ -191,11 +205,17 @@ async function startSession(phoneNumber, method = 'qr') {
         }
 
         if (connection === 'open') {
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = null;
+                reconnecting = false;
+            }
             console.log(`\n[${phoneNumber}] ✅ CONNECTED!`);
             console.log(`[${phoneNumber}] 📌 Anti-delete ON | Reply to view-once to save it\n`);
         }
 
         if (connection === 'close') {
+            if (reconnecting) return;
             const code = lastDisconnect?.error?.output?.statusCode;
             if (code === 401 || code === 440) {
                 console.log(`[${phoneNumber}] 🚫 Logged out (code ${code}). Clearing auth and reconnecting with fresh QR...`);
@@ -207,10 +227,10 @@ async function startSession(phoneNumber, method = 'qr') {
                 } catch (err) {
                     console.error(`[${phoneNumber}] ❌ Failed to clear session: ${err.message}`);
                 }
-                setTimeout(() => startSession(phoneNumber, 'qr'), 2000);
+                scheduleReconnect(2000, 'qr');
             } else {
                 console.log(`[${phoneNumber}] 🔄 Reconnecting in 5s...`);
-                setTimeout(() => startSession(phoneNumber, 'qr'), 5000);
+                scheduleReconnect(5000);
             }
         }
     });
